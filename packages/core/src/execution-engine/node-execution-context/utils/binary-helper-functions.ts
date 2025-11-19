@@ -23,6 +23,7 @@ import type { Readable } from 'stream';
 import { URL } from 'url';
 
 import { BinaryDataService } from '@/binary-data/binary-data.service';
+import { WorkflowExecutionBinaryDataLocation } from '@/execution-engine/workflow-execution-binary-data-location';
 import type { BinaryData } from '@/binary-data/types';
 import { binaryToBuffer } from '@/binary-data/utils';
 
@@ -159,7 +160,7 @@ export async function setBinaryDataBuffer(
 	executionId: string,
 ): Promise<IBinaryData> {
 	return await Container.get(BinaryDataService).store(
-		{ type: 'execution', workflowId, executionId },
+		new WorkflowExecutionBinaryDataLocation(workflowId, executionId),
 		bufferOrStream,
 		binaryData,
 	);
@@ -217,7 +218,7 @@ export async function copyBinaryFile(
 	}
 
 	return await Container.get(BinaryDataService).copyBinaryFile(
-		{ type: 'execution', workflowId, executionId },
+		new WorkflowExecutionBinaryDataLocation(workflowId, executionId),
 		returnData,
 		filePath,
 	);

@@ -1,29 +1,19 @@
-import { jsonParse, UnexpectedError } from 'n8n-workflow';
+import { jsonParse } from 'n8n-workflow';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'stream';
-import { v4 as uuid } from 'uuid';
-
-import type { ErrorReporter } from '@/errors';
 
 import type { BinaryData } from './types';
-import { assertDir, doesNotExist, FileLocation } from './utils';
+import { assertDir, doesNotExist } from './utils';
 import { DisallowedFilepathError } from '../errors/disallowed-filepath.error';
 import { FileNotFoundError } from '../errors/file-not-found.error';
 
 const EXECUTION_ID_EXTRACTOR =
 	/^(\w+)(?:[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12})$/;
 
-const EXECUTION_PATH_MATCHER = /^workflows\/([^/]+)\/executions\/([^/]+)\//;
-
-const CHAT_HUB_ATTACHMENT_PATH_MATCHER = /^chat-hub\/sessions\/([^/]+)\/messages\/([^/]+)\//;
-
 export class FileSystemManager implements BinaryData.Manager {
-	constructor(
-		private storagePath: string,
-		private readonly errorReporter: ErrorReporter,
-	) {}
+	constructor(private storagePath: string) {}
 
 	async init() {
 		await assertDir(this.storagePath);
@@ -34,7 +24,7 @@ export class FileSystemManager implements BinaryData.Manager {
 		bufferOrStream: Buffer | Readable,
 		{ mimeType, fileName }: BinaryData.PreWriteMetadata,
 	) {
-		const fileId = this.toFileId(location);
+		const fileId = location.toFileId();
 		const filePath = this.resolvePath(fileId);
 
 		await assertDir(path.dirname(filePath));
@@ -83,9 +73,10 @@ export class FileSystemManager implements BinaryData.Manager {
 
 		// binary files stored in single dir - `filesystem`
 
-		const executionIds = locations.flatMap((location) =>
-			location.type === 'execution' ? [location.executionId] : [],
-		);
+		const executionIds = locations.flatMap((location) => {
+			const id = location.getLegacyExecutionId?.();
+			return id ? [id] : [];
+		});
 
 		const set = new Set(executionIds);
 		const fileNames = await fs.readdir(this.storagePath);
@@ -103,7 +94,7 @@ export class FileSystemManager implements BinaryData.Manager {
 		// binary files stored in nested dirs - `filesystem-v2`
 
 		const binaryDataDirs = locations.map((location) =>
-			this.resolvePath(this.toRelativePath(location)),
+			this.resolvePath(location.toDirectoryPath()),
 		);
 
 		await Promise.all(
@@ -118,7 +109,7 @@ export class FileSystemManager implements BinaryData.Manager {
 		sourcePath: string,
 		{ mimeType, fileName }: BinaryData.PreWriteMetadata,
 	) {
-		const targetFileId = this.toFileId(targetLocation);
+		const targetFileId = targetLocation.toFileId();
 		const targetPath = this.resolvePath(targetFileId);
 
 		await assertDir(path.dirname(targetPath));
@@ -133,7 +124,7 @@ export class FileSystemManager implements BinaryData.Manager {
 	}
 
 	async copyByFileId(targetLocation: BinaryData.FileLocation, sourceFileId: string) {
-		const targetFileId = this.toFileId(targetLocation);
+		const targetFileId = targetLocation.toFileId();
 		const sourcePath = this.resolvePath(sourceFileId);
 		const targetPath = this.resolvePath(targetFileId);
 		const sourceMetadata = await this.getMetadata(sourceFileId);
@@ -164,61 +155,9 @@ export class FileSystemManager implements BinaryData.Manager {
 		await fs.rm(tempDir, { recursive: true });
 	}
 
-	async deleteManyByFileId(ids: string[]): Promise<void> {
-		const parsedIds = ids.flatMap((id) => {
-			try {
-				const parsed = this.parseFileId(id);
-
-				return [parsed];
-			} catch (e) {
-				this.errorReporter.warn(`Could not parse file ID ${id}. Skip deletion`);
-				return [];
-			}
-		});
-
-		await this.deleteMany(parsedIds);
-	}
-
 	// ----------------------------------
 	//         private methods
 	// ----------------------------------
-
-	/**
-	 * Generate an ID for a binary data file.
-	 *
-	 * The legacy ID format `{executionId}{uuid}` for `filesystem` mode is
-	 * no longer used on write, only when reading old stored execution data.
-	 */
-	private toFileId(location: BinaryData.FileLocation) {
-		return `${this.toRelativePath(location)}/binary_data/${uuid()}`;
-	}
-
-	private toRelativePath(location: BinaryData.FileLocation) {
-		switch (location.type) {
-			case 'execution': {
-				const executionId = location.executionId || 'temp'; // missing only in edge case, see PR #7244
-				return `workflows/${location.workflowId}/executions/${executionId}`;
-			}
-			case 'chat-hub-message-attachment':
-				return `chat-hub/sessions/${location.sessionId}/messages/${location.messageId}`;
-		}
-	}
-
-	private parseFileId(fileId: string): BinaryData.FileLocation {
-		const executionMatch = fileId.match(EXECUTION_PATH_MATCHER);
-
-		if (executionMatch) {
-			return FileLocation.ofExecution(executionMatch[1], executionMatch[2]);
-		}
-
-		const chatHubMatch = fileId.match(CHAT_HUB_ATTACHMENT_PATH_MATCHER);
-
-		if (chatHubMatch) {
-			return FileLocation.ofChatHubMessageAttachment(chatHubMatch[1], chatHubMatch[2]);
-		}
-
-		throw new UnexpectedError(`File ID ${fileId} has invalid format.`);
-	}
 
 	private resolvePath(...args: string[]) {
 		const returnPath = path.join(this.storagePath, ...args);

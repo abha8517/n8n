@@ -1,6 +1,15 @@
 import type { Readable } from 'stream';
 
 export namespace BinaryData {
+	/**
+	 * File location interface for binary data storage.
+	 * Implemented by use-case-specific location classes.
+	 */
+	export interface FileLocation {
+		toFileId(): string;
+		toDirectoryPath(): string;
+		getLegacyExecutionId?(): string | undefined;
+	}
 	type LegacyMode = 'filesystem';
 
 	type UpgradedMode = 'filesystem-v2';
@@ -32,10 +41,6 @@ export namespace BinaryData {
 
 	export type PreWriteMetadata = Omit<Metadata, 'fileSize'>;
 
-	export type FileLocation =
-		| { type: 'execution'; workflowId: string; executionId: string }
-		| { type: 'chat-hub-message-attachment'; sessionId: string; messageId: string };
-
 	export interface Manager {
 		init(): Promise<void>;
 
@@ -54,7 +59,6 @@ export namespace BinaryData {
 		 * Present for `FileSystem`, absent for `ObjectStore` (delegated to S3 lifecycle config)
 		 */
 		deleteMany?(locations: FileLocation[]): Promise<void>;
-		deleteManyByFileId?(ids: string[]): Promise<void>;
 
 		copyByFileId(targetLocation: FileLocation, sourceFileId: string): Promise<string>;
 		copyByFilePath(
