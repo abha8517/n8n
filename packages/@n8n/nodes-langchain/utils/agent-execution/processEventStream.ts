@@ -4,6 +4,8 @@ import type { AIMessageChunk, MessageContentText } from '@langchain/core/message
 import type { IExecuteFunctions } from 'n8n-workflow';
 
 import type { AgentResult, ToolCallRequest } from './types';
+import { saveChatHistoryWithBinary } from '../../nodes/agents/Agent/agents/ToolsAgent/common';
+import type { BaseChatMemory } from 'langchain/memory';
 
 /**
  * Processes the event stream from a streaming agent execution.
@@ -21,6 +23,10 @@ export async function processEventStream(
 	ctx: IExecuteFunctions,
 	eventStream: IterableReadableStream<StreamEvent>,
 	itemIndex: number,
+	_returnIntermediateSteps = false,
+	memory?: BaseChatMemory,
+	input?: string,
+	passthroughBinaryImages: boolean = true,
 ): Promise<AgentResult> {
 	const agentResult: AgentResult = {
 		output: '',
@@ -80,6 +86,18 @@ export async function processEventStream(
 		}
 	}
 	ctx.sendChunk('end', itemIndex);
+
+	// Save conversation to memory if memory is connected
+	if (input && memory && agentResult.output) {
+		await saveChatHistoryWithBinary(
+			ctx,
+			memory,
+			itemIndex,
+			input,
+			agentResult.output,
+			passthroughBinaryImages,
+		);
+	}
 
 	// Include collected tool calls in the result
 	if (toolCalls.length > 0) {

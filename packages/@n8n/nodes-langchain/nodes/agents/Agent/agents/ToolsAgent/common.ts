@@ -1,5 +1,5 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { BaseMessage } from '@langchain/core/messages';
 import { ChatPromptTemplate, type BaseMessagePromptTemplateLike } from '@langchain/core/prompts';
 import type { AgentAction, AgentFinish } from 'langchain/agents';
@@ -98,57 +98,62 @@ export async function extractBinaryMessages(
 ): Promise<HumanMessage> {
 	const binaryData = ctx.getInputData()?.[itemIndex]?.binary ?? {};
 	const binaryMessages = await Promise.all(
-		Object.values(binaryData)
-			// select only the files we can process
-			.filter((data) => isImageFile(data.mimeType) || isTextFile(data.mimeType))
-			.map(async (data) => {
+		Object.values(binaryData).flatMap(async (data) => {
+			if (isImageFile(data.mimeType)) {
 				// Handle images
-				if (isImageFile(data.mimeType)) {
-					let imageUrl: string;
+				let imageUrl: string;
 
-					// If we have a binary data ID (filesystem mode), use JWT-authenticated URL
-					if (data.id) {
-						imageUrl = await generateImageUrl(ctx, data.id, data.mimeType);
-					} else {
-						// Otherwise, use base64 data URL
-						const base64Data = data.data.includes('base64,')
-							? data.data.split('base64,')[1]
-							: data.data;
-						imageUrl = `data:${data.mimeType};base64,${base64Data}`;
-					}
+				// If we have a binary data ID (filesystem mode), use JWT-authenticated URL
+				if (data.id) {
+					imageUrl = await generateImageUrl(ctx, data.id, data.mimeType);
+				} else {
+					// Otherwise, use base64 data URL
+					const base64Data = data.data.includes('base64,')
+						? data.data.split('base64,')[1]
+						: data.data;
+					imageUrl = `data:${data.mimeType};base64,${base64Data}`;
+				}
 
-					return {
+				return [
+					{
 						type: 'image_url',
 						image_url: {
 							url: imageUrl,
 						},
-					};
-				}
-				// Handle text files
-				else {
-					let textContent: string;
-					if (data.id) {
-						const binaryBuffer = await ctx.helpers.binaryToBuffer(
-							await ctx.helpers.getBinaryStream(data.id),
-						);
-						textContent = binaryBuffer.toString('utf-8');
-					} else {
-						// Data might be base64 encoded with or without data URL prefix
-						if (data.data.includes('base64,')) {
-							const base64Data = data.data.split('base64,')[1];
-							textContent = Buffer.from(base64Data, 'base64').toString('utf-8');
-						} else {
-							// Default: binary data is base64-encoded without prefix
-							textContent = Buffer.from(data.data, 'base64').toString('utf-8');
-						}
-					}
+					},
+				];
+			}
 
-					return {
+			if (isTextFile(data.mimeType)) {
+				// Handle text files
+
+				let textContent: string;
+				if (data.id) {
+					const binaryBuffer = await ctx.helpers.binaryToBuffer(
+						await ctx.helpers.getBinaryStream(data.id),
+					);
+					textContent = binaryBuffer.toString('utf-8');
+				} else {
+					// Data might be base64 encoded with or without data URL prefix
+					if (data.data.includes('base64,')) {
+						const base64Data = data.data.split('base64,')[1];
+						textContent = Buffer.from(base64Data, 'base64').toString('utf-8');
+					} else {
+						// Default: binary data is base64-encoded without prefix
+						textContent = Buffer.from(data.data, 'base64').toString('utf-8');
+					}
+				}
+
+				return [
+					{
 						type: 'text',
 						text: `File: ${data.fileName ?? 'attachment'}\nContent:\n${textContent}`,
-					};
-				}
-			}),
+					},
+				];
+			}
+
+			return [];
+		}),
 	);
 	return new HumanMessage({
 		content: [...binaryMessages],
@@ -496,4 +501,52 @@ export async function prepareMessages(
  */
 export function preparePrompt(messages: BaseMessagePromptTemplateLike[]): ChatPromptTemplate {
 	return ChatPromptTemplate.fromMessages(messages);
+}
+
+/**
+ * Saves conversation to memory including binary images if present.
+ * This bypasses the saveContext() string-only limitation by using chatHistory.addMessages() directly.
+ *
+ * @param ctx - The execution context
+ * @param memory - The memory instance to save to
+ * @param itemIndex - The current item index
+ * @param input - The user's text input
+ * @param output - The agent's text output
+ * @param passthroughBinaryImages - Whether to include binary images in the saved history
+ */
+export async function saveChatHistoryWithBinary(
+	ctx: IExecuteFunctions | ISupplyDataFunctions,
+	memory: BaseChatMemory,
+	itemIndex: number,
+	input: string,
+	output: string,
+	passthroughBinaryImages: boolean = true,
+): Promise<void> {
+	// Check if there are binary images to include
+	const hasBinaryData = ctx.getInputData()?.[itemIndex]?.binary !== undefined;
+
+	if (hasBinaryData && passthroughBinaryImages) {
+		// Extract binary images and create a multimodal message
+		const binaryMessage = await extractBinaryMessages(ctx, itemIndex);
+
+		if (binaryMessage.content.length > 0) {
+			// Create a HumanMessage with both text and images
+			// binaryMessage.content is already a proper message content array from extractBinaryMessages
+			const messageContent = Array.isArray(binaryMessage.content)
+				? [{ type: 'text' as const, text: input }, ...binaryMessage.content]
+				: [{ type: 'text' as const, text: input }];
+
+			const userMessage = new HumanMessage({
+				content: messageContent as any, // Type assertion needed due to LangChain's complex union types
+			});
+
+			// Save both user message (with images) and AI response to memory
+			await memory.chatHistory.addMessages([userMessage, new AIMessage(output)]);
+
+			return;
+		}
+	}
+
+	// Fallback to the original saveContext for text-only conversations
+	await memory.saveContext({ input }, { output });
 }

@@ -73,7 +73,15 @@ export async function runAgent(
 			},
 		);
 
-		const result = await processEventStream(ctx, eventStream, itemIndex);
+		const result = await processEventStream(
+			ctx,
+			eventStream,
+			itemIndex,
+			undefined,
+			memory,
+			input,
+			options.passthroughBinaryImages ?? true,
+		);
 
 		// If result contains tool calls, build the request object like the normal flow
 		if (result.toolCalls && result.toolCalls.length > 0) {
