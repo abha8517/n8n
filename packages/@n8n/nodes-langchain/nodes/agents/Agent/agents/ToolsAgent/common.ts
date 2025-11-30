@@ -6,7 +6,7 @@ import type { AgentAction, AgentFinish } from 'langchain/agents';
 import type { ToolsAgentAction } from 'langchain/dist/agents/tool_calling/output_parser';
 import type { BaseChatMemory } from 'langchain/memory';
 import { DynamicStructuredTool, type Tool } from 'langchain/tools';
-import { BINARY_ENCODING, jsonParse, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { jsonParse, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import type { IExecuteFunctions, ISupplyDataFunctions } from 'n8n-workflow';
 import type { ZodObject } from 'zod';
 import { z } from 'zod';
@@ -50,10 +50,42 @@ function isImageFile(mimeType: string): boolean {
 }
 
 /**
+ * Generates a JWT-authenticated URL for serving binary image data.
+ *
+ * @param ctx - The execution context
+ * @param binaryDataId - The binary data ID (required)
+ * @param mimeType - The MIME type of the image
+ * @returns The authenticated URL for the image
+ */
+async function generateImageUrl(
+	ctx: IExecuteFunctions | ISupplyDataFunctions,
+	binaryDataId: string,
+	mimeType: string,
+): Promise<string> {
+	// Use n8n's built-in binary data service to create a signed token
+	const { BinaryDataService } = await import('n8n-core');
+	const { Container } = await import('@n8n/di');
+	const binaryDataService = Container.get(BinaryDataService);
+
+	// Create a signed token that expires in 7 days
+	const token = binaryDataService.createSignedToken(
+		{ id: binaryDataId, mimeType, data: '' },
+		'1 hour',
+	);
+
+	const baseUrl = ctx.getInstanceBaseUrl();
+	const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+
+	// Use the existing /binary-data/signed endpoint
+	return `${cleanBaseUrl}/rest/binary-data/signed?token=${token}`;
+}
+
+/**
  * Extracts binary messages (images and text files) from the input data.
  * When operating in filesystem mode, the binary stream is first converted to a buffer.
  *
- * Images are converted to base64 data URLs.
+ * Images are uploaded and served via JWT-authenticated URLs when possible,
+ * falling back to base64 data URLs.
  * Text files are read as UTF-8 text and included in the message content.
  *
  * @param ctx - The execution context
@@ -72,26 +104,23 @@ export async function extractBinaryMessages(
 			.map(async (data) => {
 				// Handle images
 				if (isImageFile(data.mimeType)) {
-					let binaryUrlString: string;
+					let imageUrl: string;
 
-					// In filesystem mode we need to get binary stream by id before converting it to buffer
+					// If we have a binary data ID (filesystem mode), use JWT-authenticated URL
 					if (data.id) {
-						const binaryBuffer = await ctx.helpers.binaryToBuffer(
-							await ctx.helpers.getBinaryStream(data.id),
-						);
-						binaryUrlString = `data:${data.mimeType};base64,${Buffer.from(binaryBuffer).toString(
-							BINARY_ENCODING,
-						)}`;
+						imageUrl = await generateImageUrl(ctx, data.id, data.mimeType);
 					} else {
-						binaryUrlString = data.data.includes('base64')
-							? data.data
-							: `data:${data.mimeType};base64,${data.data}`;
+						// Otherwise, use base64 data URL
+						const base64Data = data.data.includes('base64,')
+							? data.data.split('base64,')[1]
+							: data.data;
+						imageUrl = `data:${data.mimeType};base64,${base64Data}`;
 					}
 
 					return {
 						type: 'image_url',
 						image_url: {
-							url: binaryUrlString,
+							url: imageUrl,
 						},
 					};
 				}
