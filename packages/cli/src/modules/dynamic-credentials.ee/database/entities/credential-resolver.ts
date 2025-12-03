@@ -1,5 +1,5 @@
-import { Column, Entity } from '@n8n/typeorm';
 import { WithTimestampsAndStringId } from '@n8n/db';
+import { Column, Entity } from '@n8n/typeorm';
 
 @Entity()
 export class DynamicCredentialResolver extends WithTimestampsAndStringId {
