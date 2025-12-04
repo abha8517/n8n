@@ -117,6 +117,7 @@ import { ChangeOAuthStateColumnToUnboundedVarchar1763572724000 } from '../common
 import { CreateBinaryDataTable1763716655000 } from '../common/1763716655000-CreateBinaryDataTable';
 import { CreateWorkflowPublishHistoryTable1764167920585 } from '../common/1764167920585-CreateWorkflowPublishHistoryTable';
 import { CreateDynamicCredentialResolverTable1764682447000 } from '../common/1764682447000-CreateCredentialResolverTable';
+import { AddResolvableFieldsToCredentials1764682448000 } from '../common/1764682448000-AddResolvableFieldsToCredentials';
 import type { Migration } from '../migration-types';
 
 const sqliteMigrations: Migration[] = [
@@ -239,6 +240,7 @@ const sqliteMigrations: Migration[] = [
 	CreateWorkflowPublishHistoryTable1764167920585,
 	AddCreatorIdToProjectTable1764276827837,
 	CreateDynamicCredentialResolverTable1764682447000,
+	AddResolvableFieldsToCredentials1764682448000,
 ];
 
 export { sqliteMigrations };
