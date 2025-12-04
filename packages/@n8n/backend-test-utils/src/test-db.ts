@@ -87,7 +87,8 @@ type EntityName =
 	| 'AuthorizationCode'
 	| 'AccessToken'
 	| 'RefreshToken'
-	| 'UserConsent';
+	| 'UserConsent'
+	| 'DynamicCredentialResolver';
 
 /**
  * Truncate specific DB tables in a test DB.
